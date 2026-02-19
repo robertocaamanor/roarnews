@@ -1,0 +1,5 @@
+{
+  "name": "RoarNews",
+  "description": "A professional-grade news generation tool that creates full articles, SEO metadata, and social media summaries (Instagram, Threads, Bluesky) from a single prompt using Gemini AI.",
+  "requestFramePermissions": []
+}
