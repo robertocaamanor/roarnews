@@ -33,6 +33,11 @@ export const generateArticle = async (
                5. BÚSQUEDA DE IMÁGENES: Define 3 términos de búsqueda (keywords) exactos y optimizados para Google Images que permitan encontrar la fotografía principal perfecta para esta noticia. Deben ser específicos (incluyendo nombres, lugares y contexto).
                6. IDIOMA: Español.
 
+               REGLAS DE LEGIBILIDAD (OBLIGATORIAS para pasar el análisis Yoast SEO):
+               - FRASES CORTAS: El 80% o más de las frases deben tener MENOS de 20 palabras. Nunca escribas una frase de más de 25 palabras. Si una idea es compleja, divídela en dos frases cortas.
+               - VOZ ACTIVA: Usa voz activa en más del 90% de las frases. Está PROHIBIDO usar construcciones pasivas como "fue anunciado", "fue confirmado", "fue detenido", "se llevó a cabo", "es considerado", "fue realizado". Reformúlalas siempre en activa: "anunció", "confirmó", "detuvo", "realizó".
+               - VOCABULARIO SENCILLO: Usa palabras comunes y directas. Evita tecnicismos o palabras rebuscadas cuando existe una alternativa más simple.
+
                REGLA CRÍTICA DE FORMATO JSON: NUNCA uses comillas dobles (") dentro del valor de un string JSON. Si necesitas citar algo, usa comillas simples (') o comillas angulares («»). Ejemplo INCORRECTO: "los "desconocidos" que...". Ejemplo CORRECTO: "los 'desconocidos' que...". Respetar esto es obligatorio para que el JSON sea válido.
 
                FORMATO DE SALIDA (JSON):
