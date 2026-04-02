@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { ArticleData } from "../types";
 
 // Always initialize with the named parameter 'apiKey' and use process.env.API_KEY directly.
@@ -19,7 +19,7 @@ export const generateArticle = async (
     : "";
 
   const response = await ai.models.generateContent({
-    model: "gemini-3-pro-preview",
+    model: "gemini-2.5-flash",
     contents: `Eres un periodista de investigación senior. Tu objetivo es redactar una noticia profesional y verídica basada en la información proporcionada en las fuentes.
 
                FUENTES DE INFORMACIÓN:
@@ -34,46 +34,32 @@ export const generateArticle = async (
                6. IDIOMA: Español.
 
                FORMATO DE SALIDA (JSON):
-               - title: Titular.
+               - title: Titular en sentence case. REGLA CRÍTICA: La primera palabra va en mayúscula. TODOS los nombres propios (personas, lugares, marcas, programas, instituciones) DEBEN escribirse con su mayúscula inicial correcta. Ejemplo correcto: "Vasco Moulian y Faloon Larraguibel protagonizan cruce en 'Fiebre de baile'". NUNCA escribas un nombre propio en minúscula.
                - subtitle: Bajada.
                - body: Cuerpo en Markdown.
-               - seo: titleTag, metaDescription, keywords (array), slug.
-               - instagramSummary: 3 párrafos.
+               - seo: titleTag (MÁXIMO 60 caracteres, Yoast SEO lo exige), metaDescription (MÁXIMO 155 caracteres, Yoast SEO lo exige; resumen atractivo y completo dentro del límite), keywords (array), slug.
+               - instagramSummary: JSON array con exactamente 3 strings, uno por párrafo.
                - microblogSummary: Resumen corto.
                - imageSearchQueries: Array de 3 strings con términos de búsqueda específicos.`,
     config: {
       tools: [{ googleSearch: {} }],
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          title: { type: Type.STRING },
-          subtitle: { type: Type.STRING },
-          body: { type: Type.STRING },
-          seo: {
-            type: Type.OBJECT,
-            properties: {
-              titleTag: { type: Type.STRING },
-              metaDescription: { type: Type.STRING },
-              keywords: { type: Type.ARRAY, items: { type: Type.STRING } },
-              slug: { type: Type.STRING }
-            },
-            required: ["titleTag", "metaDescription", "keywords", "slug"]
-          },
-          instagramSummary: { type: Type.ARRAY, items: { type: Type.STRING } },
-          microblogSummary: { type: Type.STRING },
-          imageSearchQueries: { type: Type.ARRAY, items: { type: Type.STRING } }
-        },
-        required: ["title", "subtitle", "body", "seo", "instagramSummary", "microblogSummary", "imageSearchQueries"]
-      }
     }
   });
 
   const text = response.text.trim();
   const groundingSources = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
 
+  // Extract JSON from the response robustly (handles markdown code fences)
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  const jsonString = start !== -1 && end !== -1 ? text.slice(start, end + 1) : text;
+
   try {
-    const data = JSON.parse(text);
+    const data = JSON.parse(jsonString);
+    // Normalize instagramSummary: ensure it's always an array
+    if (typeof data.instagramSummary === 'string') {
+      data.instagramSummary = data.instagramSummary.split(/\n\n+/).filter(Boolean);
+    }
     return { ...data, groundingSources };
   } catch (error) {
     console.error("Failed to parse AI response:", text);

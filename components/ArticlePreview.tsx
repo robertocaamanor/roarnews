@@ -134,7 +134,7 @@ const ArticlePreview: React.FC<ArticlePreviewProps> = ({ data, onSave, isSaved }
         </div>
 
         <h1 className="serif text-4xl md:text-7xl font-black leading-[1.1] text-slate-900 mb-10 tracking-tight">
-          {data.title}
+          "{data.title}"
         </h1>
         
         {data.featuredImage && (
