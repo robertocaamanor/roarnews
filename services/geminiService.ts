@@ -33,6 +33,8 @@ export const generateArticle = async (
                5. BÚSQUEDA DE IMÁGENES: Define 3 términos de búsqueda (keywords) exactos y optimizados para Google Images que permitan encontrar la fotografía principal perfecta para esta noticia. Deben ser específicos (incluyendo nombres, lugares y contexto).
                6. IDIOMA: Español.
 
+               REGLA CRÍTICA DE FORMATO JSON: NUNCA uses comillas dobles (") dentro del valor de un string JSON. Si necesitas citar algo, usa comillas simples (') o comillas angulares («»). Ejemplo INCORRECTO: "los "desconocidos" que...". Ejemplo CORRECTO: "los 'desconocidos' que...". Respetar esto es obligatorio para que el JSON sea válido.
+
                FORMATO DE SALIDA (JSON):
                - title: Titular en sentence case. REGLA CRÍTICA: La primera palabra va en mayúscula. TODOS los nombres propios (personas, lugares, marcas, programas, instituciones) DEBEN escribirse con su mayúscula inicial correcta. Ejemplo correcto: "Vasco Moulian y Faloon Larraguibel protagonizan cruce en 'Fiebre de baile'". NUNCA escribas un nombre propio en minúscula.
                - subtitle: Bajada.
@@ -52,7 +54,19 @@ export const generateArticle = async (
   // Extract JSON from the response robustly (handles markdown code fences)
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
-  const jsonString = start !== -1 && end !== -1 ? text.slice(start, end + 1) : text;
+  let jsonString = start !== -1 && end !== -1 ? text.slice(start, end + 1) : text;
+
+  // Sanitize unescaped double quotes inside JSON string values that the model may produce.
+  // Strategy: inside each JSON string value, replace any " that is not already escaped and
+  // is not the delimiter of the string itself, with a single quote.
+  jsonString = jsonString.replace(
+    /:[ \t]*"((?:[^"\\]|\\.)*)"/g,
+    (_match: string, inner: string) => {
+      // Re-escape any unescaped double quotes that slipped into the value
+      const sanitized = inner.replace(/(?<!\\)"/g, "'");
+      return `: "${sanitized}"`;
+    }
+  );
 
   try {
     const data = JSON.parse(jsonString);
