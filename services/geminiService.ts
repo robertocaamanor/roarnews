@@ -5,6 +5,201 @@ import { ArticleData } from "../types";
 // Always initialize with the named parameter 'apiKey' and use process.env.API_KEY directly.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
+const TITLE_CASE_CONNECTORS = new Set([
+  'a',
+  'al',
+  'con',
+  'contra',
+  'de',
+  'del',
+  'desde',
+  'e',
+  'el',
+  'en',
+  'entre',
+  'hacia',
+  'hasta',
+  'la',
+  'las',
+  'los',
+  'o',
+  'para',
+  'por',
+  'que',
+  'sin',
+  'sobre',
+  'tras',
+  'u',
+  'un',
+  'una',
+  'y'
+]);
+
+const normalizeWhitespace = (value: string): string => value.replace(/\s+/g, ' ').trim();
+
+const extractProtectedTitleWords = (...texts: Array<string | undefined>): Set<string> => {
+  const protectedWords = new Set<string>();
+
+  texts
+    .filter((text): text is string => Boolean(text))
+    .forEach(text => {
+      const sequences = text.match(/\b(?:[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+(?:\s+[A-ZÁÉÍÓÚÑ][a-záéíóúñ]+)+)\b/g) ?? [];
+      sequences.forEach(sequence => {
+        sequence.split(/\s+/).forEach(word => protectedWords.add(word));
+      });
+
+      const repeatedTitleWords = text.match(/\b[A-ZÁÉÍÓÚÑ][a-záéíóúñ]{2,}\b/g) ?? [];
+      const frequency = new Map<string, number>();
+
+      repeatedTitleWords.forEach(word => {
+        frequency.set(word, (frequency.get(word) ?? 0) + 1);
+      });
+
+      frequency.forEach((count, word) => {
+        if (count > 1) {
+          protectedWords.add(word);
+        }
+      });
+
+      const acronyms = text.match(/\b[A-ZÁÉÍÓÚÑ]{2,}\b/g) ?? [];
+      acronyms.forEach(word => protectedWords.add(word));
+    });
+
+  return protectedWords;
+};
+
+const normalizeArticleTitle = (title: string, subtitle?: string, body?: string): string => {
+  const cleanedTitle = normalizeWhitespace(title.replace(/["“”«»]/g, ''));
+  if (!cleanedTitle) {
+    return title;
+  }
+
+  const protectedWords = extractProtectedTitleWords(cleanedTitle, subtitle, body);
+  const tokens = cleanedTitle.split(/(\s+)/);
+  let firstWordSeen = false;
+
+  return tokens
+    .map(token => {
+      if (/^\s+$/.test(token)) {
+        return token;
+      }
+
+      const match = token.match(/^([^A-Za-zÁÉÍÓÚÑáéíóúñ]*)([A-Za-zÁÉÍÓÚÑáéíóúñ]+)([^A-Za-zÁÉÍÓÚÑáéíóúñ]*)$/);
+      if (!match) {
+        return token;
+      }
+
+      const [, prefix, core, suffix] = match;
+      const lowerCore = core.toLowerCase();
+      let normalizedCore = core;
+
+      if (!firstWordSeen) {
+        normalizedCore = lowerCore.charAt(0).toUpperCase() + lowerCore.slice(1);
+        firstWordSeen = true;
+      } else if (protectedWords.has(core) || /^[A-ZÁÉÍÓÚÑ]{2,}$/.test(core) || /^(?:[IVXLCDM]+)$/i.test(core)) {
+        normalizedCore = core;
+      } else if (TITLE_CASE_CONNECTORS.has(lowerCore)) {
+        normalizedCore = lowerCore;
+      } else {
+        normalizedCore = lowerCore;
+      }
+
+      return `${prefix}${normalizedCore}${suffix}`;
+    })
+    .join('');
+};
+
+const splitParagraphForReadability = (paragraph: string): string[] => {
+  const cleanParagraph = normalizeWhitespace(paragraph);
+  const sentences = cleanParagraph.match(/[^.!?]+(?:[.!?]+|$)/g)?.map(sentence => sentence.trim()).filter(Boolean) ?? [];
+
+  if (sentences.length < 4) {
+    return [cleanParagraph];
+  }
+
+  const chunks: string[] = [];
+  let index = 0;
+
+  while (index < sentences.length) {
+    let take = Math.min(2, sentences.length - index);
+    const currentSentenceCount = sentences.slice(index, index + take).join(' ').split(/\s+/).length;
+
+    if (currentSentenceCount < 30 && index + take < sentences.length) {
+      take = Math.min(3, sentences.length - index);
+    }
+
+    chunks.push(sentences.slice(index, index + take).join(' '));
+    index += take;
+  }
+
+  if (chunks.length === 1 && sentences.length >= 4) {
+    const midpoint = Math.ceil(sentences.length / 2);
+    return [
+      sentences.slice(0, midpoint).join(' '),
+      sentences.slice(midpoint).join(' ')
+    ];
+  }
+
+  return chunks;
+};
+
+const normalizeBodyMarkdown = (body: string): string => {
+  const blocks = body
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean);
+
+  const normalizedBlocks: string[] = [];
+
+  const isH2 = (block: string) => /^##\s+/.test(block) && !/^###\s+/.test(block);
+  const isStructuralBlock = (block: string) => /^(###\s+|[*-]\s+|>\s+)/.test(block);
+
+  for (let i = 0; i < blocks.length; i += 1) {
+    const block = blocks[i];
+
+    if (!isH2(block)) {
+      normalizedBlocks.push(block);
+      continue;
+    }
+
+    normalizedBlocks.push(block);
+    const sectionBlocks: string[] = [];
+    let cursor = i + 1;
+
+    while (cursor < blocks.length && !isH2(blocks[cursor])) {
+      sectionBlocks.push(blocks[cursor]);
+      cursor += 1;
+    }
+
+    const paragraphIndexes = sectionBlocks.reduce<number[]>((indexes, currentBlock, index) => {
+      if (!isStructuralBlock(currentBlock)) {
+        indexes.push(index);
+      }
+      return indexes;
+    }, []);
+
+    if (paragraphIndexes.length === 1) {
+      const paragraphIndex = paragraphIndexes[0];
+      const splitParagraphs = splitParagraphForReadability(sectionBlocks[paragraphIndex]);
+
+      if (splitParagraphs.length > 1) {
+        sectionBlocks.splice(paragraphIndex, 1, ...splitParagraphs);
+      }
+    }
+
+    normalizedBlocks.push(...sectionBlocks);
+    i = cursor - 1;
+  }
+
+  return normalizedBlocks.join('\n\n');
+};
+
+const normalizeGeneratedArticle = (data: ArticleData): ArticleData => ({
+  ...data,
+  title: normalizeArticleTitle(data.title, data.subtitle, data.body),
+  body: normalizeBodyMarkdown(data.body)
+});
+
 export const generateArticle = async (
   sources: string[], 
   tone: string, 
@@ -37,11 +232,13 @@ export const generateArticle = async (
                - FRASES CORTAS: El 80% o más de las frases deben tener MENOS de 20 palabras. Nunca escribas una frase de más de 25 palabras. Si una idea es compleja, divídela en dos frases cortas.
                - VOZ ACTIVA: Usa voz activa en más del 90% de las frases. Está PROHIBIDO usar construcciones pasivas como "fue anunciado", "fue confirmado", "fue detenido", "se llevó a cabo", "es considerado", "fue realizado". Reformúlalas siempre en activa: "anunció", "confirmó", "detuvo", "realizó".
                - VOCABULARIO SENCILLO: Usa palabras comunes y directas. Evita tecnicismos o palabras rebuscadas cuando existe una alternativa más simple.
+               - PÁRRAFOS POR SECCIÓN: Después de cada H2 deben aparecer al menos 2 párrafos antes del siguiente H2. Evita dejar un solo bloque largo debajo de un subtítulo.
+               - LONGITUD DE PÁRRAFOS: Cada párrafo debe tener entre 2 y 4 frases cortas. Si el contenido lo permite, divide cada sección en 2 o 3 párrafos breves.
 
                REGLA CRÍTICA DE FORMATO JSON: NUNCA uses comillas dobles (") dentro del valor de un string JSON. Si necesitas citar algo, usa comillas simples (') o comillas angulares («»). Ejemplo INCORRECTO: "los "desconocidos" que...". Ejemplo CORRECTO: "los 'desconocidos' que...". Respetar esto es obligatorio para que el JSON sea válido.
 
                FORMATO DE SALIDA (JSON):
-               - title: Titular en sentence case. REGLA CRÍTICA: La primera palabra va en mayúscula. TODOS los nombres propios (personas, lugares, marcas, programas, instituciones) DEBEN escribirse con su mayúscula inicial correcta. Ejemplo correcto: "Vasco Moulian y Faloon Larraguibel protagonizan cruce en 'Fiebre de baile'". NUNCA escribas un nombre propio en minúscula.
+               - title: Titular en sentence case. REGLA CRÍTICA: La primera palabra va en mayúscula y el resto solo debe llevar mayúscula si corresponde a un nombre propio real. NO uses Title Case. Ejemplo correcto: "Vasco Moulian y Faloon Larraguibel protagonizan cruce en 'Fiebre de baile'". Ejemplo incorrecto: "Vasco Moulian y Faloon Larraguibel Protagonizan Cruce En 'Fiebre de baile'".
                - subtitle: Bajada.
                - body: Cuerpo en Markdown.
                - seo: titleTag (MÁXIMO 60 caracteres, Yoast SEO lo exige), metaDescription (MÁXIMO 155 caracteres, Yoast SEO lo exige; resumen atractivo y completo dentro del límite), keywords (array), slug.
@@ -74,12 +271,12 @@ export const generateArticle = async (
   );
 
   try {
-    const data = JSON.parse(jsonString);
+    const data = JSON.parse(jsonString) as ArticleData;
     // Normalize instagramSummary: ensure it's always an array
     if (typeof data.instagramSummary === 'string') {
       data.instagramSummary = data.instagramSummary.split(/\n\n+/).filter(Boolean);
     }
-    return { ...data, groundingSources };
+    return { ...normalizeGeneratedArticle(data), groundingSources };
   } catch (error) {
     console.error("Failed to parse AI response:", text);
     throw new Error("Error en el formato de la respuesta de la IA.");
